@@ -23,10 +23,13 @@ We have identified three core architectural candidates to scale the storage and 
 Instead of saving duplicate text-configuration backups in nested dated directories, we will transition to a single stable directory and commit configurations to an internal Git repository.
 * **Why:** Git utilizes incredibly efficient delta-compression under the hood. It only stores the daily line differences (diffs), shrinking the disk footprint by up to 95% while natively preserving full configuration version control.
 
-### 2. Columnar Storage (Parquet + DuckDB)
-For operational state records (interfaces, ARP, MAC, BGP), we will migrate file-system storage from verbose JSON to Apache Parquet format.
-* **Why:** Parquet is a columnar storage format with native key compression. Storing states in Parquet reduces disk usage by over 90% (e.g., shrinking 100MB of JSON to 5MB of Parquet). 
-* **Analytics:** It enables blazing-fast, serverless SQL querying across all historical state snapshots using DuckDB directly in Python.
+### 2. Dual-Storage Configuration Archiving (Text + Parquet)
+For configurations at scale, we will implement a dual-storage pipeline. While raw flat-text configuration backups will still be saved to disk for standard, native device restoration procedures (e.g., `load override` in Junos), they will simultaneously be ingested as a raw text column inside a compressed Apache Parquet database file.
+* **Why:** Storing configurations inside Parquet's columnar dictionary-encoding format compresses repetitive configurations by over 90% (e.g., shrinking 100MB of raw configs down to 5MB–10MB in Parquet).
+* **Cross-Device Analytical Queries:** Storing raw text configurations alongside structured metadata (hostname, environment, timestamp) inside Parquet columns enables blazing-fast, serverless SQL querying using DuckDB natively in Python. It allows network teams to query all device configs instantly to:
+  * Detect configuration drift and security compliance issues (e.g., find which switches are missing security timeouts).
+  * Identify IP and subnet overlaps across the entire network footprint using standard SQL strings/regex.
+  * Map fleet-wide peering topologies (e.g., listing BGP neighbors and AS configurations) in milliseconds.
 
 ### 3. Time-Series & Document Databases (PostgreSQL / TimescaleDB / MongoDB)
 For active, real-time tracking, we will refactor our multi-threaded TaskRunner to stream-write (upsert) state dictionaries directly into a central database like TimescaleDB (PostgreSQL) or MongoDB.
