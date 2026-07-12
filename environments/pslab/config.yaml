@@ -1,0 +1,9 @@
+# Snapshot Configuration Rules for pslab
+snapshot:
+  getters:
+    - interfaces
+    - interfaces_ip
+    - bgp_neighbors
+    - mac_address_table
+    - arp_table
+  route_lookup_destination: "8.8.8.8"

@@ -4,45 +4,52 @@ from napalm_101.core.exceptions import TaskExecutionError
 
 
 class StateAuditTask(BaseTask):
-    """Task to safely gather comprehensive network operational states from a device."""
+    """Task to safely gather comprehensive network operational states from a device dynamically."""
 
     @property
     def name(self) -> str:
         return "StateAuditTask"
 
     def run(self, device: Any, **kwargs) -> Dict[str, Any]:
-        """Safely executes multiple getters to capture BGP, interfaces, routes, MAC, and ARP.
+        """Safely executes multiple getters to capture network states dynamically.
         
         Args:
             device: The connected NAPALM device.
-            route_destination: Optional IP/prefix to query routing table for (default '8.8.8.8').
+            getters: List of getters to execute (e.g., ['interfaces', 'bgp_neighbors']).
+            route_destination: Optional IP/prefix to query routing table for.
         """
-        route_destination = kwargs.get("route_destination", "8.8.8.8")
+        route_destination = kwargs.get("route_destination")
         
-        # Getters to run that take no parameters
-        standard_getters = {
-            "interfaces": "get_interfaces",
-            "interfaces_ip": "get_interfaces_ip",
-            "bgp_neighbors": "get_bgp_neighbors",
-            "mac_address_table": "get_mac_address_table",
-            "arp_table": "get_arp_table",
-        }
+        # Load getters from arguments or fallback to default
+        getters_list = kwargs.get("getters")
+        if not getters_list:
+            getters_list = [
+                "interfaces",
+                "interfaces_ip",
+                "bgp_neighbors",
+                "mac_address_table",
+                "arp_table",
+            ]
 
         audit_results = {}
 
         # 1. Run standard getters with try/except to handle device incompatibilities
-        for key, getter_name in standard_getters.items():
+        for getter in getters_list:
+            # Clean name (e.g. 'interfaces' -> 'get_interfaces')
+            clean_key = getter.replace("get_", "")
+            getter_name = getter if getter.startswith("get_") else f"get_{getter}"
+
             if not hasattr(device, getter_name):
-                audit_results[key] = {"error": f"Getter '{getter_name}' not supported by driver."}
+                audit_results[clean_key] = {"error": f"Getter '{getter_name}' not supported by driver."}
                 continue
 
             try:
                 getter_fn = getattr(device, getter_name)
-                audit_results[key] = getter_fn()
+                audit_results[clean_key] = getter_fn()
             except Exception as e:
-                audit_results[key] = {"error": str(e)}
+                audit_results[clean_key] = {"error": str(e)}
 
-        # 2. Run route lookup (requires destination parameter)
+        # 2. Run route lookup if a target is requested (requires destination parameter)
         if route_destination:
             if hasattr(device, "get_route_to"):
                 try:

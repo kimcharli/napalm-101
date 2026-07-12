@@ -1,0 +1,7 @@
+# Snapshot Configuration Rules for user1
+snapshot:
+  getters:
+    - interfaces
+    - interfaces_ip
+    - bgp_neighbors
+  route_lookup_destination: "1.1.1.1"

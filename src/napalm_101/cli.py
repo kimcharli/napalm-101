@@ -1,4 +1,5 @@
 import os
+import yaml
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -56,6 +57,18 @@ def get_runner(ctx: typer.Context, inventory_path_override: Optional[Path] = Non
         )
         raise typer.Exit(code=1)
     return TaskRunner(str(path))
+
+
+def load_env_config(env_dir: Path) -> dict:
+    """Helper to load environment-specific config.yaml rules."""
+    config_path = env_dir / "config.yaml"
+    if config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            console.print(f"[yellow]Warning:[/yellow] Failed to load configuration rules file '{config_path}': {e}")
+    return {}
 
 
 def display_results(results: dict):
@@ -326,7 +339,7 @@ def snapshot(
     ctx: typer.Context,
     group: Optional[str] = typer.Option(None, "--group", "-grp", help="Filter by inventory group."),
     host: Optional[str] = typer.Option(None, "--host", "-H", help="Target a specific host."),
-    route: str = typer.Option("8.8.8.8", "--route", "-r", help="Target destination IP to query route status."),
+    route: Optional[str] = typer.Option(None, "--route", "-r", help="Target destination IP to query route status. Overrides config.yaml."),
     parallel: bool = typer.Option(True, "--parallel/--sequential", help="Run tasks in parallel."),
     inventory_path: Optional[Path] = typer.Option(
         None, "--inventory", "-i", help="Override path to inventory YAML file."
@@ -352,6 +365,14 @@ def snapshot(
         console.print("[yellow]Warning:[/yellow] No target hosts found for snapshot.")
         raise typer.Exit()
 
+    # Load environment-specific config.yaml rules
+    env_config = load_env_config(env_info["env_dir"])
+    snapshot_rules = env_config.get("snapshot", {})
+
+    # Resolve dynamic getters and route lookup destinations
+    configured_getters = snapshot_rules.get("getters", None)
+    route_destination = route or snapshot_rules.get("route_lookup_destination", "8.8.8.8")
+
     # Resolve minute-scale timestamp subfolder
     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
     snapshot_dir = env_info["env_dir"] / "snapshots" / timestamp_str
@@ -366,7 +387,10 @@ def snapshot(
         f"\n📸 [bold blue]Initiating Unified Network Snapshot[/bold blue] ({len(target_hosts)} host(s)) "
         f"in [cyan]{env_info['env_name']}[/cyan] environment..."
     )
-    console.print(f"📁 Destination directory: [yellow]{snapshot_dir}[/yellow]\n")
+    console.print(f"📁 Destination directory: [yellow]{snapshot_dir}[/yellow]")
+    if configured_getters:
+        console.print(f"📝 Custom getters defined in config.yaml: [green]{configured_getters}[/green]")
+    console.print(f"🎯 Route target resolved: [green]{route_destination}[/green]\n")
 
     # 1. Execute Config Backup Task
     console.print("[bold]Phase 1: Retrieving Running Configurations...[/bold]")
@@ -396,7 +420,8 @@ def snapshot(
         hosts=target_hosts,
         task=audit_task,
         parallel=parallel,
-        route_destination=route,
+        getters=configured_getters,
+        route_destination=route_destination,
     )
     display_results(audit_results)
 
