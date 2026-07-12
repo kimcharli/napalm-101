@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import List, Optional
+from datetime import datetime
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -10,7 +11,8 @@ from rich.syntax import Syntax
 from napalm_101.core.inventory import Inventory
 from napalm_101.tasks.base import TaskRunner
 from napalm_101.tasks.getters import GettersTask
-from napalm_101.tasks.configs import ConfigTask
+from napalm_101.tasks.configs import ConfigTask, BackupTask
+from napalm_101.tasks.audits import StateAuditTask
 
 app = typer.Typer(
     name="napalm-101",
@@ -20,18 +22,39 @@ app = typer.Typer(
 console = Console()
 
 
-def get_runner(inventory_path: Optional[Path]) -> TaskRunner:
+@app.callback()
+def main(
+    ctx: typer.Context,
+    env: str = typer.Option(
+        None,
+        "--env",
+        "-e",
+        envvar="NAPALM_ENV",
+        help="Target environment (e.g. pslab, user1). Fallback defaults to 'pslab'.",
+    ),
+):
+    """Global configuration callback to resolve environment context."""
+    active_env = env or "pslab"
+    env_dir = Path("environments") / active_env
+    inventory_path = env_dir / "inventory.yaml"
+
+    ctx.obj = {
+        "env_name": active_env,
+        "env_dir": env_dir,
+        "inventory_path": inventory_path,
+    }
+
+
+def get_runner(ctx: typer.Context, inventory_path_override: Optional[Path] = None) -> TaskRunner:
     """Helper to locate inventory file and initialize runner."""
-    path = inventory_path or Path("inventory.yaml")
+    path = inventory_path_override or ctx.obj["inventory_path"]
+    
     if not path.exists():
-        # Fall back to root or relative
-        path = Path(os.getcwd()) / "inventory.yaml"
-        if not path.exists():
-            console.print(
-                f"[red]Error:[/red] Inventory file not found. "
-                "Specify with --inventory or create 'inventory.yaml' in current directory."
-            )
-            raise typer.Exit(code=1)
+        console.print(
+            f"[red]Error:[/red] Inventory file not found at '{path}'. "
+            f"Ensure the environment '{ctx.obj['env_name']}' is correctly initialized."
+        )
+        raise typer.Exit(code=1)
     return TaskRunner(str(path))
 
 
@@ -79,14 +102,15 @@ def display_results(results: dict):
 
 @app.command()
 def hosts(
+    ctx: typer.Context,
     inventory_path: Optional[Path] = typer.Option(
-        None, "--inventory", "-i", help="Path to inventory YAML file."
+        None, "--inventory", "-i", help="Override path to inventory YAML file."
     ),
 ):
-    """List all configured hosts and groups in the inventory."""
-    runner = get_runner(inventory_path)
+    """List all configured hosts and groups in the active environment's inventory."""
+    runner = get_runner(ctx, inventory_path)
     
-    table = Table(title="Inventory Hosts")
+    table = Table(title=f"Inventory Hosts - Environment: {ctx.obj['env_name']}")
     table.add_column("Host Name", style="cyan")
     table.add_column("IP / Hostname", style="green")
     table.add_column("Driver", style="magenta")
@@ -109,6 +133,7 @@ def hosts(
 
 @app.command()
 def run_getter(
+    ctx: typer.Context,
     getter: List[str] = typer.Option(
         ["get_facts"], "--getter", "-g", help="Getter name(s) to run (can be passed multiple times)."
     ),
@@ -116,11 +141,11 @@ def run_getter(
     host: Optional[str] = typer.Option(None, "--host", "-H", help="Target a specific host."),
     parallel: bool = typer.Option(True, "--parallel/--sequential", help="Run tasks in parallel."),
     inventory_path: Optional[Path] = typer.Option(
-        None, "--inventory", "-i", help="Path to inventory YAML file."
+        None, "--inventory", "-i", help="Override path to inventory YAML file."
     ),
 ):
     """Fetch operational data (getters) from devices."""
-    runner = get_runner(inventory_path)
+    runner = get_runner(ctx, inventory_path)
 
     # Resolve target hosts
     if host:
@@ -140,7 +165,7 @@ def run_getter(
             console.print("[yellow]Warning:[/yellow] No hosts found in inventory.")
             raise typer.Exit()
 
-    console.print(f"Running getter task [blue]{getter}[/blue] on {len(target_hosts)} host(s)...")
+    console.print(f"Running getter task [blue]{getter}[/blue] on {len(target_hosts)} host(s) in [cyan]{ctx.obj['env_name']}[/cyan]...")
     
     task = GettersTask()
     results = runner.run_on_hosts(
@@ -164,6 +189,7 @@ def run_getter(
 
 @app.command()
 def config_deploy(
+    ctx: typer.Context,
     config_file: Path = typer.Argument(..., help="Path to configuration file to load."),
     group: Optional[str] = typer.Option(None, "--group", "-grp", help="Filter by inventory group."),
     host: Optional[str] = typer.Option(None, "--host", "-H", help="Target a specific host."),
@@ -171,11 +197,11 @@ def config_deploy(
     commit: bool = typer.Option(False, "--commit", "-c", help="Actually commit changes instead of dry-run."),
     parallel: bool = typer.Option(True, "--parallel/--sequential", help="Run tasks in parallel."),
     inventory_path: Optional[Path] = typer.Option(
-        None, "--inventory", "-i", help="Path to inventory YAML file."
+        None, "--inventory", "-i", help="Override path to inventory YAML file."
     ),
 ):
     """Deploy configuration changes onto devices (default dry-run)."""
-    runner = get_runner(inventory_path)
+    runner = get_runner(ctx, inventory_path)
 
     # Ensure config file exists
     if not config_file.exists():
@@ -226,6 +252,171 @@ def config_deploy(
                 ))
             else:
                 console.print(f"[green]Info:[/green] No changes needed for {h_name}.")
+
+
+@app.command()
+def backup(
+    ctx: typer.Context,
+    group: Optional[str] = typer.Option(None, "--group", "-grp", help="Filter by inventory group."),
+    host: Optional[str] = typer.Option(None, "--host", "-H", help="Target a specific host."),
+    parallel: bool = typer.Option(True, "--parallel/--sequential", help="Run tasks in parallel."),
+    inventory_path: Optional[Path] = typer.Option(
+        None, "--inventory", "-i", help="Override path to inventory YAML file."
+    ),
+):
+    """Backup active running configurations of devices into environment backups folder."""
+    env_info = ctx.obj
+    runner = get_runner(ctx, inventory_path)
+
+    # Resolve target hosts
+    if host:
+        try:
+            target_hosts = [runner.inventory.get_host(host)]
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(code=1)
+    elif group:
+        target_hosts = runner.inventory.list_hosts(group=group)
+    else:
+        target_hosts = list(runner.inventory.hosts.values())
+
+    if not target_hosts:
+        console.print("[yellow]Warning:[/yellow] No target hosts found for backup.")
+        raise typer.Exit()
+
+    # Resolve timestamp subfolder (minute-scale)
+    timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    backup_dir = env_info["env_dir"] / "config" / "backups" / timestamp_str
+    
+    # Ensure folder structure is present
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(
+        f"Initiating running config backup for {len(target_hosts)} host(s) "
+        f"in [cyan]{env_info['env_name']}[/cyan] environment..."
+    )
+
+    task = BackupTask()
+    results = runner.run_on_hosts(
+        hosts=target_hosts,
+        task=task,
+        parallel=parallel,
+    )
+
+    display_results(results)
+
+    # Save successful configuration content to the resolved date-partitioned backup path
+    saved_count = 0
+    for h_name, res in results.items():
+        if res.success and res.data:
+            file_path = backup_dir / f"{h_name}.conf"
+            try:
+                file_path.write_text(res.data)
+                console.print(f"💾 Saved backup: [green]{file_path}[/green]")
+                saved_count += 1
+            except Exception as e:
+                console.print(f"[red]Error saving backup file for {h_name}:[/red] {e}")
+
+    if saved_count > 0:
+        console.print(f"\n[green]Success:[/green] Completed saving {saved_count} configuration backup(s) to [blue]{backup_dir}[/blue]")
+
+
+@app.command()
+def snapshot(
+    ctx: typer.Context,
+    group: Optional[str] = typer.Option(None, "--group", "-grp", help="Filter by inventory group."),
+    host: Optional[str] = typer.Option(None, "--host", "-H", help="Target a specific host."),
+    route: str = typer.Option("8.8.8.8", "--route", "-r", help="Target destination IP to query route status."),
+    parallel: bool = typer.Option(True, "--parallel/--sequential", help="Run tasks in parallel."),
+    inventory_path: Optional[Path] = typer.Option(
+        None, "--inventory", "-i", help="Override path to inventory YAML file."
+    ),
+):
+    """Capture a unified network snapshot: concurrent configuration backups and operational state audits."""
+    env_info = ctx.obj
+    runner = get_runner(ctx, inventory_path)
+
+    # Resolve target hosts
+    if host:
+        try:
+            target_hosts = [runner.inventory.get_host(host)]
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(code=1)
+    elif group:
+        target_hosts = runner.inventory.list_hosts(group=group)
+    else:
+        target_hosts = list(runner.inventory.hosts.values())
+
+    if not target_hosts:
+        console.print("[yellow]Warning:[/yellow] No target hosts found for snapshot.")
+        raise typer.Exit()
+
+    # Resolve minute-scale timestamp subfolder
+    timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    snapshot_dir = env_info["env_dir"] / "snapshots" / timestamp_str
+    configs_dir = snapshot_dir / "configs"
+    states_dir = snapshot_dir / "states"
+
+    # Ensure directories exist
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    states_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(
+        f"\n📸 [bold blue]Initiating Unified Network Snapshot[/bold blue] ({len(target_hosts)} host(s)) "
+        f"in [cyan]{env_info['env_name']}[/cyan] environment..."
+    )
+    console.print(f"📁 Destination directory: [yellow]{snapshot_dir}[/yellow]\n")
+
+    # 1. Execute Config Backup Task
+    console.print("[bold]Phase 1: Retrieving Running Configurations...[/bold]")
+    backup_task = BackupTask()
+    backup_results = runner.run_on_hosts(
+        hosts=target_hosts,
+        task=backup_task,
+        parallel=parallel,
+    )
+    display_results(backup_results)
+
+    # Save successful configs
+    configs_saved = 0
+    for h_name, res in backup_results.items():
+        if res.success and res.data:
+            file_path = configs_dir / f"{h_name}.conf"
+            try:
+                file_path.write_text(res.data)
+                configs_saved += 1
+            except Exception as e:
+                console.print(f"[red]Error saving config for {h_name}:[/red] {e}")
+
+    # 2. Execute State Audit Task
+    console.print("\n[bold]Phase 2: Auditing Operational States (BGP, Interfaces, ARP, MAC, Routes)...[/bold]")
+    audit_task = StateAuditTask()
+    audit_results = runner.run_on_hosts(
+        hosts=target_hosts,
+        task=audit_task,
+        parallel=parallel,
+        route_destination=route,
+    )
+    display_results(audit_results)
+
+    # Save successful states as JSON
+    import json
+    states_saved = 0
+    for h_name, res in audit_results.items():
+        if res.success and res.data:
+            file_path = states_dir / f"{h_name}_state.json"
+            try:
+                with open(file_path, "w") as f:
+                    json.dump(res.data, f, indent=2)
+                states_saved += 1
+            except Exception as e:
+                console.print(f"[red]Error saving state audit for {h_name}:[/red] {e}")
+
+    # Final summary
+    console.print(f"\n[green]Success:[/green] Completed Unified Network Snapshot!")
+    console.print(f"💾 Configurations saved : [green]{configs_saved}/{len(target_hosts)}[/green] in [yellow]{configs_dir}[/yellow]")
+    console.print(f"📊 State audits saved  : [green]{states_saved}/{len(target_hosts)}[/green] in [yellow]{states_dir}[/yellow]")
 
 
 if __name__ == "__main__":

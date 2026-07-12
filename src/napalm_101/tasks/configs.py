@@ -84,3 +84,24 @@ class ConfigTask(BaseTask):
             except Exception:
                 pass
             raise TaskExecutionError(f"Configuration change failed: {e}") from e
+
+
+class BackupTask(BaseTask):
+    """Task to retrieve the running configuration from a device."""
+
+    @property
+    def name(self) -> str:
+        return "BackupTask"
+
+    def run(self, device: Any, **kwargs) -> str:
+        """Retrieves and returns the running configuration string.
+        
+        Args:
+            device: The connected NAPALM device.
+        """
+        try:
+            configs = device.get_config()
+            return configs.get("running", "")
+        except Exception as e:
+            raise TaskExecutionError(f"Failed to retrieve running configuration: {e}") from e
+

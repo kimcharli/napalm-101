@@ -1,0 +1,14 @@
+# Network Automation Inventory for User1 Environment
+groups:
+  user1_junos:
+    driver: junos
+    username: user1
+    password: user1password
+    port: 830
+
+hosts:
+  user1-qfx01:
+    hostname: 10.85.193.10
+    groups: [user1_junos]
+    vars:
+      role: access

@@ -7,6 +7,7 @@ from napalm_101.core.manager import DeviceConnection, device_session
 from napalm_101.tasks.base import TaskRunner
 from napalm_101.tasks.getters import GettersTask
 from napalm_101.tasks.configs import ConfigTask
+from napalm_101.tasks.audits import StateAuditTask
 
 
 @pytest.fixture
@@ -148,3 +149,28 @@ def test_config_task_commit_success():
     mock_device.discard_config.assert_not_called()
 
     assert res["committed"] is True
+
+
+def test_state_audit_task_success():
+    mock_device = MagicMock()
+    mock_device.get_interfaces.return_value = {"ge-0/0/0": {"is_up": True}}
+    mock_device.get_interfaces_ip.return_value = {"ge-0/0/0": {"ipv4": {"10.0.0.1": {}}}}
+    mock_device.get_bgp_neighbors.return_value = {"global": {"peers": {}}}
+    mock_device.get_mac_address_table.return_value = [{"mac": "00:11:22:33:44:55"}]
+    mock_device.get_arp_table.return_value = [{"ip": "10.0.0.1"}]
+    mock_device.get_route_to.return_value = {"8.8.8.8": [{"protocol": "bgp"}]}
+
+    task = StateAuditTask()
+    res = task.run(mock_device, route_destination="8.8.8.8")
+
+    assert "interfaces" in res
+    assert "interfaces_ip" in res
+    assert "bgp_neighbors" in res
+    assert "mac_address_table" in res
+    assert "arp_table" in res
+    assert "route_lookup" in res
+
+    assert res["interfaces"] == {"ge-0/0/0": {"is_up": True}}
+    assert res["route_lookup"]["destination"] == "8.8.8.8"
+    assert res["route_lookup"]["result"] == {"8.8.8.8": [{"protocol": "bgp"}]}
+
