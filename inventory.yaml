@@ -1,0 +1,78 @@
+# Network Automation Inventory for pslab (10.85.192.0/26)
+groups:
+  pslab_junos:
+    driver: junos
+    username: labroot
+    password: lab123
+    # Junos NAPALM driver uses NETCONF (default port 830 or fallback to port 22)
+    port: 830
+    vars:
+      lab_name: pslab
+      subnet: 10.85.192.0/26
+
+  mx80:
+    vars:
+      platform: mx80
+      device_type: edge_router
+
+  qfx5100:
+    vars:
+      platform: qfx5100
+      device_type: access_switch
+
+  qfx10002:
+    vars:
+      platform: qfx10002
+      device_type: spine_switch
+
+hosts:
+  # MX80 Edge Routers (.12 and .13)
+  pslab-mx12:
+    hostname: 10.85.192.12
+    groups: [pslab_junos, mx80]
+    vars:
+      u_number: 12
+
+  pslab-mx13:
+    hostname: 10.85.192.13
+    groups: [pslab_junos, mx80]
+    vars:
+      u_number: 13
+
+  # QFX5100 / QFX5120 Leaf Switches (.14 to .17)
+  pslab-qfx14:
+    hostname: 10.85.192.14
+    groups: [pslab_junos, qfx5100]
+    vars:
+      u_number: 14
+
+  pslab-qfx15:
+    hostname: 10.85.192.15
+    groups: [pslab_junos, qfx5100]
+    vars:
+      u_number: 15
+
+  pslab-qfx16:
+    hostname: 10.85.192.16
+    groups: [pslab_junos, qfx5100]
+    vars:
+      u_number: 16
+
+  pslab-qfx17:
+    hostname: 10.85.192.17
+    groups: [pslab_junos, qfx5100]
+    vars:
+      u_number: 17
+
+  # QFX10002 Spine Switches (.19 and .20)
+  pslab-qfx19:
+    hostname: 10.85.192.19
+    groups: [pslab_junos, qfx10002]
+    vars:
+      u_number: 19
+
+  pslab-qfx20:
+    hostname: 10.85.192.20
+    groups: [pslab_junos, qfx10002]
+    vars:
+      u_number: 20

@@ -1,0 +1,28 @@
+[project]
+name = "napalm-101"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Chang Hyun (Charlie) Kim", email = "kimcharli@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "napalm>=5.1.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "typer>=0.26.8",
+]
+
+[project.scripts]
+napalm-101 = "napalm_101.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.23,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
