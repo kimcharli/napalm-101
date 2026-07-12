@@ -41,10 +41,21 @@ We replaced simple configuration-only backups with a unified, chronological **Ne
   * `configs/`: Stores flat-text running configuration backups (`{host}.conf`).
   * `states/`: Stores structured JSON operational state audits (`{host}_state.json`), including Interfaces status, Interface IPs, BGP Neighbors, ARP tables, MAC tables, and target route routing metrics.
 
-### 4. CLI CLI Script Rename
+### 4. Dynamic Capture Lists via YAML Config Rules
+We chose to decouple the list of operational state metrics from the Python codebase.
+* The CLI dynamically parses environment-specific `config.yaml` configuration rules at runtime.
+* These rule files specify exactly what metrics to capture and what routing targets to query per environment, keeping the core task logic highly generic.
+
+### 5. Custom Junos EVPN NETCONF Audits & Flattening
+Since EVPN is not a standard, vendor-agnostic NAPALM getter, we implemented custom, Junos-specific operational audits:
+* **Structured NETCONF RPC Retrieval**: The task directly accesses the underlying PyEZ engine to execute XML/JSON RPCs (`get-evpn-database-information` and `get-evpn-instance-information`) over NETCONF, passing positional format parameters (`{"format": "json"}`) to retrieve structured Python dictionaries natively.
+* **Auto-Fallback to CLI**: If the device's firmware or RPC options are incompatible with PyEZ JSON rendering, the task automatically falls back to raw CLI screen-scraping over SSH, ensuring connection reliability.
+* **Redundant Nesting Flattening**: We resolved to automatically detect and flatten Junos's redundant JSON top-level wrapping keys, mapping data natively to standard, dashed keys (`evpn-database-information` and `evpn-instance-information`).
+
+### 6. CLI CLI Script Rename
 We renamed our registered command-line script entrypoint from `napalm-101` to **`run`** inside `pyproject.toml` to maximize terminal efficiency, readability, and speed.
 
-### 5. GitOps Security Enforcement
+### 7. GitOps Security Enforcement
 We configured `.gitignore` to strictly exclude all dynamic snapshots:
 ```ini
 environments/*/snapshots/
