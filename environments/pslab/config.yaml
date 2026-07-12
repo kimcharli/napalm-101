@@ -6,4 +6,6 @@ snapshot:
     - bgp_neighbors
     - mac_address_table
     - arp_table
+    - vlans
+    - evpn
   route_lookup_destination: "8.8.8.8"

@@ -4,4 +4,5 @@ snapshot:
     - interfaces
     - interfaces_ip
     - bgp_neighbors
+    - vlans
   route_lookup_destination: "1.1.1.1"

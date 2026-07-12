@@ -174,3 +174,30 @@ def test_state_audit_task_success():
     assert res["route_lookup"]["destination"] == "8.8.8.8"
     assert res["route_lookup"]["result"] == {"8.8.8.8": [{"protocol": "bgp"}]}
 
+
+def test_state_audit_task_evpn_junos():
+    mock_device = MagicMock()
+    mock_device.__class__.__name__ = "JunOSDriver"
+    mock_device.platform = "junos"
+    
+    mock_pyez = mock_device.device
+    # Mock real-world nested Junos JSON rpc structures
+    mock_pyez.rpc.get_evpn_database_information.return_value = {
+        "evpn-database-information": [{"instance-name": "evpn-1"}]
+    }
+    mock_pyez.rpc.get_evpn_instance_information.return_value = {
+        "evpn-instance-information": [{"instance-name": "evpn-1"}]
+    }
+
+    task = StateAuditTask()
+    res = task.run(mock_device, getters=["evpn"])
+
+    mock_pyez.rpc.get_evpn_database_information.assert_called_once_with({"format": "json"})
+    mock_pyez.rpc.get_evpn_instance_information.assert_called_once_with({"format": "json"})
+
+    assert "evpn" in res
+    # Verify that the nested keys are successfully flattened!
+    assert res["evpn"]["evpn-database-information"] == [{"instance-name": "evpn-1"}]
+    assert res["evpn"]["evpn-instance-information"] == [{"instance-name": "evpn-1"}]
+
+

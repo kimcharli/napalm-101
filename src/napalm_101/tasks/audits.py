@@ -10,12 +10,48 @@ class StateAuditTask(BaseTask):
     def name(self) -> str:
         return "StateAuditTask"
 
+    def _get_junos_evpn_data(self, device: Any) -> Dict[str, Any]:
+        """Custom helper to safely extract EVPN database and instance information from Junos over NETCONF/CLI."""
+        evpn_data = {}
+        try:
+            pyez_dev = device.device  # Get underlying PyEZ device
+
+            # 1. Fetch EVPN Database (Try JSON encoding first, fall back to CLI)
+            try:
+                db_resp = pyez_dev.rpc.get_evpn_database_information({"format": "json"})
+                if isinstance(db_resp, dict) and "evpn-database-information" in db_resp:
+                    evpn_data["evpn-database-information"] = db_resp["evpn-database-information"]
+                else:
+                    evpn_data["evpn-database-information"] = db_resp
+            except Exception:
+                try:
+                    evpn_data["evpn-database-information"] = device.cli(["show evpn database"])["show evpn database"]
+                except Exception as e:
+                    evpn_data["evpn-database-information"] = {"error": f"Failed to retrieve EVPN database: {e}"}
+
+            # 2. Fetch EVPN Instance (Try JSON encoding first, fall back to CLI)
+            try:
+                inst_resp = pyez_dev.rpc.get_evpn_instance_information({"format": "json"})
+                if isinstance(inst_resp, dict) and "evpn-instance-information" in inst_resp:
+                    evpn_data["evpn-instance-information"] = inst_resp["evpn-instance-information"]
+                else:
+                    evpn_data["evpn-instance-information"] = inst_resp
+            except Exception:
+                try:
+                    evpn_data["evpn-instance-information"] = device.cli(["show evpn instance"])["show evpn instance"]
+                except Exception as e:
+                    evpn_data["evpn-instance-information"] = {"error": f"Failed to retrieve EVPN instances: {e}"}
+
+            return evpn_data
+        except Exception as e:
+            return {"error": f"Junos EVPN Netconf RPC failed: {e}"}
+
     def run(self, device: Any, **kwargs) -> Dict[str, Any]:
         """Safely executes multiple getters to capture network states dynamically.
         
         Args:
             device: The connected NAPALM device.
-            getters: List of getters to execute (e.g., ['interfaces', 'bgp_neighbors']).
+            getters: List of getters to execute (e.g., ['interfaces', 'bgp_neighbors', 'evpn']).
             route_destination: Optional IP/prefix to query routing table for.
         """
         route_destination = kwargs.get("route_destination")
@@ -33,10 +69,22 @@ class StateAuditTask(BaseTask):
 
         audit_results = {}
 
-        # 1. Run standard getters with try/except to handle device incompatibilities
+        # 1. Run getters with try/except to handle device incompatibilities
         for getter in getters_list:
-            # Clean name (e.g. 'interfaces' -> 'get_interfaces')
             clean_key = getter.replace("get_", "")
+            
+            # Handle custom EVPN getter
+            if clean_key == "evpn":
+                is_junos = "junos" in device.__class__.__name__.lower() or (
+                    hasattr(device, "platform") and device.platform == "junos"
+                )
+                if is_junos:
+                    audit_results["evpn"] = self._get_junos_evpn_data(device)
+                else:
+                    audit_results["evpn"] = {"error": "EVPN auditing is only supported on Junos driver devices."}
+                continue
+
+            # Handle standard getters
             getter_name = getter if getter.startswith("get_") else f"get_{getter}"
 
             if not hasattr(device, getter_name):
